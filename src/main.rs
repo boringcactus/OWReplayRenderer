@@ -7,7 +7,7 @@ mod window;
 use obs::*;
 use std::io::stdin;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use window::*;
 
 fn main() {
@@ -94,6 +94,8 @@ fn get_side() -> Vec<Key> {
 }
 
 fn record_once(player: Key, replay_length: &Duration, obs: &mut OBSClient, overwatch: &Window) {
+    // make sure we don't start while overwatch is not focused
+    overwatch.await_focus();
     // tell overwatch to watch the designated player
     overwatch.send(&player);
     small_sleep();
@@ -105,8 +107,14 @@ fn record_once(player: Key, replay_length: &Duration, obs: &mut OBSClient, overw
     big_sleep();
     // tell overwatch to unpause
     overwatch.send(&ctrl(P));
-    // wait for the game to end
-    sleep(replay_length.clone());
+    small_sleep();
+    // can't just wait for the game to end bc if ppl aren't loaded in at the start
+    // then we don't have them available to focus. instead, we spam once a second until the game ends
+    let game_end = Instant::now() + replay_length.clone();
+    while Instant::now() < game_end {
+        overwatch.send(&player);
+        med_sleep();
+    }
     // wait another second
     med_sleep();
     // stop recording
@@ -115,7 +123,7 @@ fn record_once(player: Key, replay_length: &Duration, obs: &mut OBSClient, overw
     sleep(Duration::from_secs(2));
     // jump to beginning again
     overwatch.send(&ctrl(Left));
-    small_sleep();
+    med_sleep();
     // re-pause since reaching end doesn't actually pause
     overwatch.send(&ctrl(P));
     println!("Recording following user {:?} finished", player);

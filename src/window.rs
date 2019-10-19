@@ -156,23 +156,26 @@ impl Window {
         Window::find(Target::Overwatch)
     }
 
+    unsafe fn is_focused(&self) -> bool {
+        GetForegroundWindow() == self.handle
+    }
+
     pub fn await_focus(&self) {
-        unsafe fn is_focused(handle: HWND) -> bool {
-            GetForegroundWindow() == handle
-        }
-        while unsafe { !is_focused(self.handle) } {
+        while unsafe { !self.is_focused() } {
             sleep(Duration::from_millis(100));
         }
     }
 
     pub fn send(&self, key: &Key) {
         unsafe {
-            let mut inputs: Vec<INPUT> = key.clone().into_iter().collect();
-            SendInput(
-                inputs.len() as u32,
-                &mut inputs[0] as *mut INPUT,
-                std::mem::size_of::<INPUT>() as i32,
-            );
+            if self.is_focused() {
+                let mut inputs: Vec<INPUT> = key.clone().into_iter().collect();
+                SendInput(
+                    inputs.len() as u32,
+                    &mut inputs[0] as *mut INPUT,
+                    std::mem::size_of::<INPUT>() as i32,
+                );
+            }
         }
     }
 }
