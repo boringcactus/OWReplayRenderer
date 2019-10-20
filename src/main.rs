@@ -5,12 +5,20 @@ mod obs;
 mod window;
 
 use obs::*;
+use std::ffi::OsString;
+use std::fs::read_dir;
 use std::io::stdin;
+use std::process::{Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use window::*;
 
 fn main() {
+    record();
+    mux();
+}
+
+fn record() {
     println!(r"Thanks for using OWReplayRenderer, brought to you by boringcactus.
 Before we get started, make sure everything's all ready to go:
 - OBS and Overwatch are both running
@@ -55,6 +63,8 @@ this tool will help you stitch those videos all together for easier viewing.");
     small_sleep();
     overwatch.send(&Space);
     small_sleep();
+
+    println!("Finished recording everyone's perspective!")
 }
 
 fn read_line() -> String {
@@ -139,4 +149,121 @@ fn med_sleep() {
 
 fn big_sleep() {
     sleep(Duration::from_secs(2));
+}
+
+/// Multiplex all those pieces into a video file with one track for each video,
+/// plus one track with a whole matrix overview exclusively for the purpose of flexing.
+fn mux() {
+    if !has_ffmpeg() {
+        println!(
+            r"This tool can also merge each of those perspectives into one big file containing
+each video, so you can switch between perspectives after the fact and keep everything lined up.
+Unfortunately, the tool it uses for this, `ffmpeg`, couldn't be found.
+If you want this, go download ffmpeg, put `ffmpeg.exe` right next to `OWReplayRender.exe`, and
+come back here and press Enter. If you don't need it, just close this program."
+        );
+        let _ = read_line();
+    }
+    println!(
+        r"All the footage has been recorded; now it's time to combine it.
+Go to your OBS output folder and make a subdirectory for this specific match,
+then put your six most recent videos (since they're the ones this tool just made)
+into that folder. Once you're done, paste that folder path in here:"
+    );
+    let dir = read_line();
+    let cameras = read_dir(&dir)
+        .unwrap()
+        .filter_map(|x| x.ok())
+        .map(|x| x.file_name())
+        .filter(|x| x != "final.mkv" && x != "mosaic.mkv")
+        .collect::<Vec<_>>();
+    let mut inputs = cameras
+        .into_iter()
+        .flat_map(|x| vec![OsString::from("-i"), x])
+        .collect::<Vec<_>>();
+
+    println!("Would you like to also generate a mosaic view? It's cool, but it's slow. [y/n]");
+    let mosaic = read_line() == "y";
+    if mosaic {
+        println!("Building mosaic...");
+        let filter = r"
+            nullsrc=size=1920x720:r=60 [base];
+            [0:v] setpts=PTS-STARTPTS, scale=640x360 [upperleft];
+            [1:v] setpts=PTS-STARTPTS, scale=640x360 [uppermiddle];
+            [2:v] setpts=PTS-STARTPTS, scale=640x360 [upperright];
+            [3:v] setpts=PTS-STARTPTS, scale=640x360 [lowerleft];
+            [4:v] setpts=PTS-STARTPTS, scale=640x360 [lowermiddle];
+            [5:v] setpts=PTS-STARTPTS, scale=640x360 [lowerright];
+            [base][upperleft] overlay=shortest=1 [tmp1];
+            [tmp1][uppermiddle] overlay=shortest=1:x=640 [tmp2];
+            [tmp2][upperright] overlay=shortest=1:x=1280 [tmp3];
+            [tmp3][lowerleft] overlay=shortest=1:y=360 [tmp4];
+            [tmp4][lowermiddle] overlay=shortest=1:y=360:x=640 [tmp5];
+            [tmp5][lowerright] overlay=shortest=1:y=360:x=1280
+        ";
+        let result = Command::new("ffmpeg")
+            .args(&["-y", "-hide_banner", "-v", "warning", "-stats"])
+            .args(&inputs)
+            .arg("-filter_complex")
+            .arg(filter)
+            .args(&[
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-an",
+            ])
+            .arg("mosaic.mkv")
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        if !result.success() {
+            panic!(
+                "ffmpeg failed with code {}",
+                result.code().map_or("?".to_string(), |x| x.to_string())
+            )
+        }
+        inputs.append(&mut vec![
+            OsString::from("-i"),
+            OsString::from("mosaic.mkv"),
+        ]);
+    }
+
+    println!("Merging...");
+    let maps = (0..(inputs.len() / 2))
+        .flat_map(|x| vec!["-map".to_string(), format!("{}", x)])
+        .collect::<Vec<_>>();
+    let result = Command::new("ffmpeg")
+        .args(&["-y", "-hide_banner", "-v", "warning", "-stats"])
+        .args(inputs)
+        .args(&[
+            "-filter_complex",
+            "[0:a][1:a][2:a][3:a][4:a][5:a] amix=inputs=6",
+        ])
+        .args(maps)
+        .args(&["-c:v", "copy", "-c:a", "aac"])
+        .arg("final.mkv")
+        .current_dir(&dir)
+        .status()
+        .unwrap();
+    if !result.success() {
+        panic!(
+            "ffmpeg failed with code {}",
+            result.code().map_or("?".to_string(), |x| x.to_string())
+        )
+    }
+
+    println!(r"Done! Your final video is in that directory alongside the footage, called `final.mkv`.
+Playing it with VLC or MPC-HC will let you switch video tracks on the fly, but I recommend mpv, because
+you can bind keyboard shortcuts to switching video tracks instead of digging through menus.
+Bind 1 to `set vid 1`, 2 to `set vid 2`, ..., and 0 to `set vid 7` to match my setup.
+Press Enter to exit this tool. Have a nice day!");
+    let _ = read_line();
+}
+
+fn has_ffmpeg() -> bool {
+    let result = Command::new("ffmpeg")
+        .arg("-version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    result.success()
 }

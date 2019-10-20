@@ -38,8 +38,6 @@ impl OBSClient {
         let request = Message::text(serde_json::to_string(&request).unwrap());
         self.client.send_message(&request).unwrap();
         let response = self.recv();
-        //        let id = response["message-id"].as_str().unwrap();
-        //        assert_eq!(id, message_id);
         let status = response["status"].as_str().unwrap();
         if status == "error" {
             eprintln!("OBS WebSocket failure: {}", response["error"]);
@@ -58,15 +56,5 @@ impl OBSClient {
         self.send_request(json!({
             "request-type": "StopRecording",
         }));
-    }
-
-    pub fn get_output_dir(&mut self) -> String {
-        let response = self.send_request(json!({
-            "request-type": "GetRecordingFolder",
-        }));
-        response["rec-folder"]
-            .as_str()
-            .expect("Recording folder was not a string!")
-            .to_string()
     }
 }
