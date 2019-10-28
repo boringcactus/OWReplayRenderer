@@ -1,4 +1,6 @@
 use serde_json::Value;
+use std::fs;
+use std::path::PathBuf;
 use websocket::client::sync::Client;
 use websocket::stream::sync::TcpStream;
 use websocket::ws::dataframe::DataFrame;
@@ -6,6 +8,7 @@ use websocket::{ClientBuilder, Message};
 
 pub struct OBSClient {
     client: Client<TcpStream>,
+    orig_dir: Option<String>,
 }
 
 impl OBSClient {
@@ -14,7 +17,10 @@ impl OBSClient {
             .unwrap()
             .connect_insecure()
             .unwrap();
-        let mut result = OBSClient { client };
+        let mut result = OBSClient {
+            client,
+            orig_dir: None,
+        };
         result.send_request(json!({
             "request-type": "SetHeartbeat",
             "enable": false,
@@ -40,8 +46,7 @@ impl OBSClient {
         let response = self.recv();
         let status = response["status"].as_str().unwrap();
         if status == "error" {
-            eprintln!("OBS WebSocket failure: {}", response["error"]);
-            std::process::exit(1);
+            panic!("OBS WebSocket failure: {}", response["error"]);
         }
         response
     }
@@ -56,5 +61,44 @@ impl OBSClient {
         self.send_request(json!({
             "request-type": "StopRecording",
         }));
+    }
+
+    fn get_output_dir(&mut self) -> String {
+        let response = self.send_request(json!({
+            "request-type": "GetRecordingFolder",
+        }));
+        response["rec-folder"]
+            .as_str()
+            .expect("Recording folder was not a string!")
+            .to_string()
+    }
+
+    fn set_output_dir(&mut self, output_dir: &str) {
+        self.send_request(json!({
+            "request-type": "SetRecordingFolder",
+            "rec-folder": output_dir,
+        }));
+    }
+
+    pub fn use_subdir(&mut self) -> PathBuf {
+        let orig_dir = self.get_output_dir();
+        let timestamp = crate::timestamp();
+        let mut new_dir = PathBuf::from(&orig_dir);
+        new_dir.push(timestamp);
+        fs::create_dir(&new_dir).expect("Failed to create recording subdirectory");
+        self.orig_dir = Some(orig_dir);
+        self.set_output_dir(new_dir.to_str().expect("Failed to record in subdirectory"));
+        new_dir
+    }
+}
+
+impl Drop for OBSClient {
+    fn drop(&mut self) {
+        let temp_dir = self.get_output_dir();
+        if let Some(ref orig_dir) = self.orig_dir {
+            let orig_dir = orig_dir.clone();
+            self.set_output_dir(&orig_dir);
+            fs::remove_dir_all(temp_dir).expect("Failed to clean up subdirectory");
+        }
     }
 }
