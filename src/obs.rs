@@ -94,11 +94,9 @@ impl OBSClient {
 
 impl Drop for OBSClient {
     fn drop(&mut self) {
-        let temp_dir = self.get_output_dir();
         if let Some(ref orig_dir) = self.orig_dir {
             let orig_dir = orig_dir.clone();
             self.set_output_dir(&orig_dir);
-            fs::remove_dir_all(temp_dir).expect("Failed to clean up subdirectory");
         }
     }
 }

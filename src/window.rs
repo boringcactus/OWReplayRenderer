@@ -3,8 +3,9 @@ use winapi::shared::ntdef::LPSTR;
 use winapi::shared::windef::HWND;
 use winapi::um::winuser::{
     EnumWindows, GetForegroundWindow, GetWindowTextA, GetWindowTextLengthA, SendInput, INPUT,
-    INPUT_KEYBOARD, KEYEVENTF_KEYUP, VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4,
-    VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_LCONTROL, VK_LEFT, VK_SPACE, VK_UP,
+    INPUT_KEYBOARD, INPUT_MOUSE, KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
+    MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, VK_DOWN, VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2,
+    VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_LCONTROL, VK_LEFT, VK_SPACE, VK_TAB, VK_UP,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -34,7 +35,9 @@ pub enum Key {
     P,
     Left,
     Up,
+    Down,
     Space,
+    Tab,
     Escape,
     F1,
     F2,
@@ -88,8 +91,10 @@ impl IntoIterator for Key {
             P => 0x50,
             Left => VK_LEFT,
             Up => VK_UP,
+            Down => VK_DOWN,
             Escape => VK_ESCAPE,
             Space => VK_SPACE,
+            Tab => VK_TAB,
             F1 => VK_F1,
             F2 => VK_F2,
             F3 => VK_F3,
@@ -160,21 +165,47 @@ impl Window {
         GetForegroundWindow() == self.handle
     }
 
+    unsafe fn send_input(&self, mut inputs: Vec<INPUT>) {
+        SendInput(
+            inputs.len() as u32,
+            &mut inputs[0] as *mut INPUT,
+            std::mem::size_of::<INPUT>() as i32,
+        );
+        crate::small_sleep();
+    }
+
     pub fn await_focus(&self) {
         while unsafe { !self.is_focused() } {
             sleep(Duration::from_millis(100));
         }
     }
 
+    pub fn click(&self, x: i32, y: i32) {
+        unsafe {
+            if self.is_focused() {
+                let x = (x * 65535) / 1920;
+                let y = (y * 65535) / 1080;
+                let mut result0: INPUT = std::mem::zeroed();
+                result0.type_ = INPUT_MOUSE;
+                let info = result0.u.mi_mut();
+                info.dx = x;
+                info.dy = y;
+                info.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_LEFTDOWN;
+                let mut result1: INPUT = std::mem::zeroed();
+                result1.type_ = INPUT_MOUSE;
+                let info = result1.u.mi_mut();
+                info.dwFlags = MOUSEEVENTF_LEFTUP;
+                let inputs = vec![result0, result1];
+                self.send_input(inputs);
+            }
+        }
+    }
+
     pub fn send(&self, key: &Key) {
         unsafe {
             if self.is_focused() {
-                let mut inputs: Vec<INPUT> = key.clone().into_iter().collect();
-                SendInput(
-                    inputs.len() as u32,
-                    &mut inputs[0] as *mut INPUT,
-                    std::mem::size_of::<INPUT>() as i32,
-                );
+                let inputs: Vec<INPUT> = key.clone().into_iter().collect();
+                self.send_input(inputs);
             }
         }
     }
