@@ -1,3 +1,5 @@
+use crate::image::{Screenshot, OWContext};
+
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -89,6 +91,25 @@ impl OBSClient {
         self.orig_dir = Some(orig_dir);
         self.set_output_dir(new_dir.to_str().expect("Failed to record in subdirectory"));
         new_dir
+    }
+
+    pub fn get_screenshot<C: OWContext>(&mut self) -> Screenshot<C> {
+        let response = self.send_request(json!({
+            "request-type": "GetCurrentScene",
+        }));
+        let scene_name = response["name"]
+            .as_str()
+            .expect("Scene name was not a string!")
+            .to_string();
+        let response = self.send_request(json!({
+            "request-type": "TakeSourceScreenshot",
+            "sourceName": scene_name,
+            "embedPictureFormat": "png",
+            "width": 1920,
+            "height": 1080,
+        }));
+        let data = response["img"].as_str().expect("Screenshot data URI was not a string!");
+        Screenshot::new(data)
     }
 }
 

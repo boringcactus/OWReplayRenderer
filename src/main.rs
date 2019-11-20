@@ -1,7 +1,11 @@
 #[macro_use]
 extern crate serde_json;
+#[macro_use]
+extern crate lazy_static;
 
+mod image;
 mod obs;
+mod ocr;
 mod window;
 
 use obs::*;
@@ -14,8 +18,18 @@ use std::str::FromStr;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use window::*;
+use crate::image::ReplaysMenu;
+
+fn test() {
+    let mut obs = OBSClient::new();
+    let screenshot = obs.get_screenshot::<ReplaysMenu>();
+    let replays = screenshot.get_replays();
+    dbg!(replays);
+}
 
 fn main() {
+    test();
+    return;
     println!(
         r"Thanks for using OWReplayRenderer, brought to you by boringcactus.
 Before we get started, make sure everything's all ready to go:
@@ -161,8 +175,7 @@ fn record(obs: &mut OBSClient, spec: ReplaySpec) {
     overwatch.send(&Space);
 
     // wait for it to load
-    big_sleep();
-    big_sleep();
+    sleep(Duration::from_secs(10));
 
     // pause it
     overwatch.send(&ctrl(P));
@@ -208,15 +221,15 @@ fn record_once(player: Key, replay_length: &Duration, obs: &mut OBSClient, overw
         overwatch.send(&player);
         med_sleep();
     }
-    // wait another second
-    med_sleep();
+    // wait another while
+    big_sleep();
     // stop recording
     obs.stop_recording();
     // wait a bit
     big_sleep();
     // jump to beginning again
     overwatch.send(&ctrl(Left));
-    med_sleep();
+    big_sleep();
     // re-pause since reaching end doesn't actually pause
     overwatch.send(&ctrl(P));
     print!("{:?} done. ", player);
