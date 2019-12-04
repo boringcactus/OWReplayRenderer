@@ -5,95 +5,147 @@ extern crate lazy_static;
 
 mod image;
 mod obs;
-mod ocr;
 mod window;
 
 use obs::*;
+use std::env::{set_current_dir, current_exe};
 use std::ffi::OsString;
 use std::fs::read_dir;
-use std::io::stdin;
+use std::io::{stdin, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::str::FromStr;
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use window::*;
-use crate::image::ReplaysMenu;
+use crate::image::{InReplay, Screenshot};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-fn test() {
-    let mut obs = OBSClient::new();
-    let screenshot = obs.get_screenshot::<ReplaysMenu>();
-    let replays = screenshot.get_replays();
-    dbg!(replays);
+lazy_static! {
+    static ref RUNNING: Arc<AtomicBool> = {
+        Arc::new(AtomicBool::new(true))
+    };
 }
 
 fn main() {
-    test();
-    return;
     println!(
-        r"Thanks for using OWReplayRenderer, brought to you by boringcactus.
+        r#"Thanks for using OWReplayRenderer, brought to you by boringcactus.
 Before we get started, make sure everything's all ready to go:
 - OBS and Overwatch are both running
 - OBS has `obs-websocket` installed and running on port 4444 with no authentication
-- Overwatch has all the default keybinds for the replay viewer: F1-F12 for player focus, Ctrl+P for pause
-- Overwatch has Ctrl+Left bound to 'Jump to Start'
-Got all that? Press Enter to continue."
+- Overwatch has all the default keybinds for the replay viewer: F1-F12 for player focus, Ctrl+P for pause, N to show/hide controls
+- Overwatch has Ctrl+Left bound to 'Jump to Start' and Ctrl+Right bound to 'Replay Forward'
+- Load up a replay, spectate yourself with one of F1-F12, take a 1080p screenshot of the whole screen, and save it next to OWReplayRenderer.exe as "username_badge.png"
+Got all that? Press Enter to continue."#
     );
     let _ = read_line();
 
-    println!(
-        r#"For each replay you want to record, enter its position in the replay list (1-10),
-then its duration (minutes:seconds), then which side you want to record from that replay (red or blue).
-For example:
-1 12:06 red
-3 15:02 blue
-2 9:35 red
-
-Leave a blank line when you're done. Make sure you're looking at the main menu when you finish. Start typing here:"#
-    );
-    let mut specs = vec![];
-    loop {
-        let line = read_line();
-        if line.is_empty() {
-            break;
-        }
-        let spec: ReplaySpec = match line.parse() {
-            Ok(spec) => spec,
-            Err(e) => {
-                eprintln!("{}", e);
-                continue;
+    if !Screenshot::<InReplay>::has_me() {
+        // if we didn't find it in the existing working directory, find it adjacent to the executable
+        if let Ok(x) = current_exe() {
+            if let Some(x) = x.parent() {
+                match set_current_dir(x) {
+                    Ok(_) => (),
+                    Err(x) => eprintln!("Error looking for screenshot: {}", x),
+                }
             }
-        };
-        specs.push(spec);
+        }
     }
+
+    while !Screenshot::<InReplay>::has_me() {
+        println!(
+            r#"Couldn't find a screenshot with your username.
+Load up a replay, spectate yourself with one of F1-F12, take a 1080p screenshot of the whole screen, and save it next to OWReplayRenderer.exe as "username_badge.png".
+Press Enter when you've done that."#
+        );
+        let _ = read_line();
+    }
+
+    let replays = read_replay_range();
+
+    println!("Go make sure Overwatch is at the main menu, then come back here and press Enter.");
+    let _ = read_line();
 
     println!(
         r"That's all we need! You'll need to re-focus Overwatch yourself, so this tool can send it keyboard shortcuts.
-It'll render each entire game from each player's perspective, which will take a while.
+It'll render each entire game from the perspective of each player on your team, which will take a while.
+It'll record the oldest replay first and work its way forward.
 You can't do anything else with your computer during that time, either, unfortunately.
-Once everything is rendered, it'll exit the replay viewer automatically, and stitch those videos together for easier viewing."
-    );
-    println!(
-        "Alt-tab back into Overwatch and then come back in at least *checks notes* {} minutes",
-        6u64 * specs.iter().map(|x| x.1.as_secs()).sum::<u64>() / 60
+Once everything is rendered, it'll exit the replay viewer automatically, and stitch those videos together for easier viewing.
+Alt-tab back into Overwatch and then come back in a long time."
     );
 
-    let spec_count = specs.len();
+    {
+        let r = RUNNING.clone();
 
-    for (i, spec) in specs.into_iter().enumerate() {
+        ctrlc::set_handler(move || {
+            r.store(false, Ordering::SeqCst);
+        }).expect("Error setting Ctrl-C handler");
+    }
+
+    let replay_count = replays.len();
+    for (i, index) in replays.into_iter().rev().enumerate() {
         let mut obs = OBSClient::new();
         let record_dir = obs.use_subdir();
 
-        record(&mut obs, spec);
+        record(&mut obs, index);
+        if !RUNNING.load(Ordering::SeqCst) {
+            return;
+        }
         mux(record_dir);
+        if !RUNNING.load(Ordering::SeqCst) {
+            return;
+        }
 
-        println!("Finished recording game {}/{}", i + 1, spec_count);
+        println!("Finished recording game {}/{}", i + 1, replay_count);
     }
 
     println!("Done with everything! Press Enter to exit.");
     let _ = read_line();
 }
 
+fn read_replay_range() -> Vec<u8> {
+    println!(
+        r#"This tool can record whichever replays you want. Enter a range or set of ranges (e.g. "1-4, 6-7, 9"):"#
+    );
+    let line = read_line();
+    let pieces = line.split(',').map(|x| x.trim());
+    let mut result = vec![];
+    for piece in pieces {
+        let range: Vec<&str> = piece.splitn(2, "-").collect();
+        let bounds = match range.as_slice() {
+            [n] => n.parse::<u8>().map(|x| (x, x)),
+            [a, b] => a.parse::<u8>().and_then(|a| b.parse::<u8>().map(|b| (a, b))),
+            _ => unreachable!()
+        };
+        let (lo, hi) = match bounds {
+            Ok((lo, hi)) => {
+                if lo > hi {
+                    println!("Bad range: {}-{} is not valid", lo, hi);
+                    return read_replay_range();
+                }
+                if lo == 0 || lo > 10 {
+                    println!("Bad range: {} is not valid", lo);
+                    return read_replay_range();
+                }
+                if hi > 10 {
+                    println!("Bad range: {} is not valid", hi);
+                    return read_replay_range();
+                }
+                (lo, hi)
+            },
+            Err(e) => {
+                println!("Bad range: {}", e);
+                return read_replay_range();
+            }
+        };
+        result.extend(lo..=hi);
+    }
+    result.sort();
+    result
+}
+
+#[derive(Copy, Clone)]
 enum Side {
     Red,
     Blue,
@@ -108,50 +160,30 @@ impl Into<Vec<Key>> for Side {
     }
 }
 
-struct ReplaySpec(u8, Duration, Side);
+fn guess_side(obs: &mut OBSClient, overwatch: &Window) -> Side {
+    // skip forward a bit
+    big_sleep();
+    overwatch.send(&ctrl(Right));
+    big_sleep();
+    overwatch.send(&ctrl(Right));
+    big_sleep();
+    overwatch.send(&ctrl(Right));
+    big_sleep();
 
-impl FromStr for ReplaySpec {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let pieces: Vec<&str> = s.split(' ').collect();
-        let [index, duration, side] = match pieces.as_slice() {
-            [index, duration, side] => [index, duration, side],
-            _ => return Err("Lines should be three pieces, separated by a space.".into()),
-        };
-        let index = match index.parse::<u8>() {
-            Ok(x) => {
-                if x >= 1 && x <= 10 {
-                    x
-                } else {
-                    return Err("Index must be between 1 and 10.".into());
-                }
-            }
-            Err(e) => return Err(e.to_string()),
-        };
-        let duration = {
-            let pieces: Vec<&str> = duration.split(":").collect();
-            let int_pieces: Vec<Result<u64, _>> = pieces.iter().map(|x| x.parse()).collect();
-            match int_pieces.as_slice() {
-                [Ok(m), Ok(s)] => {
-                    let s = m * 60 + s;
-                    Duration::from_secs(s)
-                }
-                _ => return Err("Replay length must be minutes:seconds.".into()),
-            }
-        };
-        let side = match side.to_lowercase().as_str() {
-            "blue" => Side::Blue,
-            "red" => Side::Red,
-            _ => return Err("Side must be \"red\" or \"blue\"".into()),
-        };
-        Ok(ReplaySpec(index, duration, side))
+    // see if we can find the player on the blue side
+    let blue_keys: Vec<Key> = Side::Blue.into();
+    for key in blue_keys {
+        overwatch.send(&key);
+        big_sleep();
+        if obs.get_screenshot::<InReplay>().is_me() {
+            // we're on the blue side!
+            return Side::Blue;
+        }
     }
+    Side::Red
 }
 
-fn record(obs: &mut OBSClient, spec: ReplaySpec) {
-    let ReplaySpec(index, replay_length, side) = spec;
-    let side: Vec<Key> = side.into();
+fn record(obs: &mut OBSClient, index: u8) {
     let overwatch = Window::overwatch();
 
     overwatch.await_focus();
@@ -166,6 +198,9 @@ fn record(obs: &mut OBSClient, spec: ReplaySpec) {
     big_sleep();
     overwatch.click(380, 62);
     big_sleep();
+    if !RUNNING.load(Ordering::SeqCst) {
+        return;
+    }
 
     // open the replay
     for _ in 0..index {
@@ -173,18 +208,36 @@ fn record(obs: &mut OBSClient, spec: ReplaySpec) {
     }
     overwatch.send(&Tab);
     overwatch.send(&Space);
+    if !RUNNING.load(Ordering::SeqCst) {
+        return;
+    }
 
     // wait for it to load
     sleep(Duration::from_secs(10));
+    if !RUNNING.load(Ordering::SeqCst) {
+        return;
+    }
 
     // pause it
     overwatch.send(&ctrl(P));
 
-    for player in side {
-        record_once(player, &replay_length, obs, &overwatch);
+    // guess the side
+    let side = guess_side(obs, &overwatch);
+    let side: Vec<Key> = side.into();
+    if !RUNNING.load(Ordering::SeqCst) {
+        return;
     }
 
-    // quit from this replay
+    for player in side {
+        record_once(player, obs, &overwatch);
+        if !RUNNING.load(Ordering::SeqCst) {
+            return;
+        }
+    }
+
+    // quit from this replay (click to dismiss the controls if they are shown)
+    big_sleep();
+    overwatch.click(1710, 1003);
     overwatch.send(&Escape);
     overwatch.send(&Up);
     overwatch.send(&Up);
@@ -201,25 +254,50 @@ fn read_line() -> String {
     result.trim().to_string()
 }
 
-fn record_once(player: Key, replay_length: &Duration, obs: &mut OBSClient, overwatch: &Window) {
+fn record_once(player: Key, obs: &mut OBSClient, overwatch: &Window) {
     // make sure we don't start while overwatch is not focused
     overwatch.await_focus();
     // tell overwatch to watch the designated player
     overwatch.send(&player);
     // tell overwatch to skip to the beginning
     overwatch.send(&ctrl(Left));
+    // give it a while to re-load
+    big_sleep();
+    big_sleep();
+    if !RUNNING.load(Ordering::SeqCst) {
+        return;
+    }
+    // dismiss the controls if they're shown
+    overwatch.click(1710, 1003);
+    big_sleep();
+    // show the controls
+    overwatch.send(&N);
+    big_sleep();
+    // if it's not definitely paused...
+    if !obs.get_screenshot::<InReplay>().is_definitely_paused() {
+        // pause it
+        overwatch.send(&ctrl(P));
+        // skip to the beginning again
+        overwatch.send(&ctrl(Left));
+    }
+    // dismiss the controls
+    overwatch.send(&N);
+    // chase the target
+    overwatch.send(&player);
     // tell OBS to start recording
     obs.start_recording();
     // wait a bit so OBS can catch up
     big_sleep();
     // tell overwatch to unpause
     overwatch.send(&ctrl(P));
-    // can't just wait for the game to end bc if ppl aren't loaded in at the start
-    // then we don't have them available to focus. instead, we spam once a second until the game ends
-    let game_end = Instant::now() + replay_length.clone();
-    while Instant::now() < game_end {
+    // while the game hasn't ended...
+    while !obs.get_screenshot::<InReplay>().is_gameover() {
+        // spam
         overwatch.send(&player);
         med_sleep();
+        if !RUNNING.load(Ordering::SeqCst) {
+            return;
+        }
     }
     // wait another while
     big_sleep();
@@ -233,6 +311,7 @@ fn record_once(player: Key, replay_length: &Duration, obs: &mut OBSClient, overw
     // re-pause since reaching end doesn't actually pause
     overwatch.send(&ctrl(P));
     print!("{:?} done. ", player);
+    std::io::stdout().flush().unwrap();
 }
 
 pub fn small_sleep() {
@@ -300,6 +379,9 @@ fn mux(record_dir: PathBuf) {
             result.code().map_or("?".to_string(), |x| x.to_string())
         )
     }
+    if !RUNNING.load(Ordering::SeqCst) {
+        return;
+    }
 
     if !MUX_ALL {
         let mut src = record_dir.clone();
@@ -352,6 +434,9 @@ fn mux(record_dir: PathBuf) {
             "ffmpeg failed with code {}",
             result.code().map_or("?".to_string(), |x| x.to_string())
         )
+    }
+    if !RUNNING.load(Ordering::SeqCst) {
+        return;
     }
 }
 

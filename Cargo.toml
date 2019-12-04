@@ -1,6 +1,6 @@
 [package]
 name = "ow_replay_renderer"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Melody Horn <melody@boringcactus.com>"]
 edition = "2018"
 
@@ -15,3 +15,4 @@ image = "0.22.3"
 imageproc = "0.19.2"
 base64 = "0.11.0"
 lazy_static = "1.4.0"
+ctrlc = "3.1.3"

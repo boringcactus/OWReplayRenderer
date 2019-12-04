@@ -1,22 +1,21 @@
-use image::png::PNGDecoder;
-use image::{ImageFormat, RgbImage, GenericImageView, SubImage, Rgb};
-use crate::ReplaySpec;
-use crate::ocr::ocr;
-use std::time::Duration;
+use image::{ImageFormat, RgbImage, GenericImageView, SubImage, Rgb, GrayImage};
 use std::marker::PhantomData;
 use image::Pixel;
-use image::imageops::{grayscale, invert};
+use image::imageops::grayscale;
 use imageproc::stats::histogram;
+use imageproc::template_matching::{match_template, MatchTemplateMethod, find_extremes};
+use imageproc::geometric_transformations::{Projection, warp, Interpolation};
+use imageproc::gradients::sobel_gradients;
+use imageproc::map::map_subpixels;
 
 pub trait OWContext {}
 
+#[allow(dead_code)]
 pub struct ReplaysMenu;
-
 impl OWContext for ReplaysMenu {}
 
-fn dump(image: &RgbImage, tag: &str) {
-    image.save(format!("temp_{}.png", tag)).unwrap();
-}
+pub struct InReplay;
+impl OWContext for InReplay {}
 
 pub struct Screenshot<C: OWContext> {
     data: RgbImage,
@@ -36,19 +35,11 @@ impl<C: OWContext> Screenshot<C> {
             marker: PhantomData,
         }
     }
-
-    pub fn dump(&self, tag: &str) {
-        dump(&self.data, tag);
-    }
 }
 
 #[derive(Debug)]
 pub struct Replay {
     game_type: String,
-    map: String,
-    duration: Duration,
-    played: String,
-    outcome: String,
 }
 
 // uses Manhattan distance
@@ -68,18 +59,7 @@ fn mean_color_distance(img: &SubImage<&RgbImage>, color: &Rgb<u8>) -> f32 {
     sum / (count as f32)
 }
 
-fn get_duration(duration: SubImage<&RgbImage>, index: u32) -> Duration {
-    let duration = duration.view(0, 13, 100, 12);
-    let mut duration = grayscale(&duration);
-    invert(&mut duration);
-    duration.save(format!("temp_{}_duration.png", index)).unwrap();
-    let spec = ocr(duration);
-    let pieces: Vec<&str> = spec.split(':').collect();
-    let minutes: u64 = pieces[0].parse().unwrap();
-    let seconds: u64 = pieces[1].parse().unwrap();
-    Duration::from_secs(minutes * 60 + seconds)
-}
-
+#[allow(dead_code)]
 fn get_game_type(game_type: SubImage<&RgbImage>) -> String {
     use std::collections::HashMap;
     lazy_static! {
@@ -103,12 +83,12 @@ fn get_game_type(game_type: SubImage<&RgbImage>) -> String {
     }
 }
 
-fn is_replay(row: &SubImage<&RgbImage>, index: u32) -> bool {
+#[allow(dead_code)]
+fn is_replay(row: &SubImage<&RgbImage>) -> bool {
     // grayscale to let us histogram on value
     let image = grayscale(row);
-    image.save(format!("temp_{}_row_grayscale.png", index));
     // build the histogram
-    let histogram = histogram(&row.to_image());
+    let histogram = histogram(&image);
     // get the count between 130 and 150
     let count: usize = histogram.channels[0][100..150].iter().sum::<u32>() as usize;
     // get the total count
@@ -117,28 +97,20 @@ fn is_replay(row: &SubImage<&RgbImage>, index: u32) -> bool {
     count * 3 > total
 }
 
-fn get_replay(row: SubImage<&RgbImage>, index: u32) -> Option<Replay> {
-    if is_replay(&row, index) {
+#[allow(dead_code)]
+fn get_replay(row: SubImage<&RgbImage>) -> Option<Replay> {
+    if is_replay(&row) {
         let game_type = row.view(0, 0, 250, 40);
         let game_type = get_game_type(game_type);
-        let map = row.view(250, 0, 800, 40);
-        let map = "Unknown".to_string();
-        let duration = row.view(1050, 0, 250, 40);
-        let duration = get_duration(duration, index);
-        let played = "Unknown".to_string();
-        let outcome = "Unknown".to_string();
         Some(Replay {
             game_type,
-            map,
-            duration,
-            played,
-            outcome,
         })
     } else {
         None
     }
 }
 
+#[allow(dead_code)]
 impl Screenshot<ReplaysMenu> {
     pub fn get_replays(&self) -> Vec<Replay> {
         let data = &self.data;
@@ -146,8 +118,47 @@ impl Screenshot<ReplaysMenu> {
         (1..=11).filter_map(|index| {
             let offset = (index - 1) * 40;
             let row = data.view(70, 428 + offset, 1780, 40);
-            dump(&row.to_image(), &format!("{}_row", index));
-            get_replay(row, index)
+            get_replay(row)
         }).collect()
+    }
+}
+
+fn warp_username_badge(badge: &RgbImage) -> GrayImage {
+    let transform = Projection::from_matrix([0.86979, 0.25266, -460.5, 0.07896, 1.00069, -885.0, 0.0, 0.0, 1.0]).unwrap();
+    let badge = warp(&badge, &transform, Interpolation::Bicubic, Rgb([0, 0, 0]));
+    let badge = badge.view(0, 0, 180, 40).to_image();
+    let badge = sobel_gradients(&grayscale(&badge));
+    map_subpixels(&badge, |x| (x / 255) as u8)
+}
+
+impl Screenshot<InReplay> {
+    pub fn has_me() -> bool {
+        std::fs::metadata("username_badge.png").is_ok()
+    }
+
+    pub fn is_me(&self) -> bool {
+        let data = &self.data;
+        let actual_name_badge = warp_username_badge(data);
+        let expected_name_badge = image::open("username_badge.png").unwrap();
+        let expected_name_badge = warp_username_badge(&expected_name_badge.to_rgb());
+        let overlap = match_template(&actual_name_badge, &expected_name_badge, MatchTemplateMethod::CrossCorrelationNormalized);
+        let extremes = find_extremes(&overlap);
+        extremes.max_value > 0.9
+    }
+
+    pub fn is_gameover(&self) -> bool {
+        let data = &self.data;
+        // this only works bc the controls autoexpand on game end
+        let data = data.view(1689, 948, 50, 14);
+        let distance = mean_color_distance(&data, &Rgb([46, 181, 229]));
+        distance < 3.0
+    }
+
+    // we measure with the middle of the pause button
+    pub fn is_definitely_paused(&self) -> bool {
+        let data = &self.data;
+        let data = data.view(316, 997, 4, 15);
+        let distance = mean_color_distance(&data, &Rgb([193, 193, 193]));
+        distance < 10.0
     }
 }
