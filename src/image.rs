@@ -1,12 +1,12 @@
-use image::{ImageFormat, RgbImage, GenericImageView, SubImage, Rgb, GrayImage};
-use std::marker::PhantomData;
-use image::Pixel;
 use image::imageops::grayscale;
-use imageproc::stats::histogram;
-use imageproc::template_matching::{match_template, MatchTemplateMethod, find_extremes};
-use imageproc::geometric_transformations::{Projection, warp, Interpolation};
+use image::Pixel;
+use image::{GenericImageView, GrayImage, ImageFormat, Rgb, RgbImage, SubImage};
+use imageproc::geometric_transformations::{warp, Interpolation, Projection};
 use imageproc::gradients::sobel_gradients;
 use imageproc::map::map_subpixels;
+use imageproc::stats::histogram;
+use imageproc::template_matching::{find_extremes, match_template, MatchTemplateMethod};
+use std::marker::PhantomData;
 
 pub trait OWContext {}
 
@@ -25,10 +25,14 @@ pub struct Screenshot<C: OWContext> {
 impl<C: OWContext> Screenshot<C> {
     pub fn new(data_uri: &str) -> Screenshot<C> {
         const PRELUDE: &'static str = "data:image/png;base64,";
-        assert!(data_uri.starts_with(PRELUDE), "Image data poorly specified!");
+        assert!(
+            data_uri.starts_with(PRELUDE),
+            "Image data poorly specified!"
+        );
         let data = &data_uri[PRELUDE.len()..];
         let data = base64::decode(data).expect("Image data poorly specified!");
-        let image = image::load_from_memory_with_format(&data, ImageFormat::PNG).expect("Image data poorly specified!");
+        let image = image::load_from_memory_with_format(&data, ImageFormat::PNG)
+            .expect("Image data poorly specified!");
         let image = image.to_rgb();
         Screenshot {
             data: image,
@@ -44,18 +48,15 @@ pub struct Replay {
 
 // uses Manhattan distance
 fn mean_color_distance(img: &SubImage<&RgbImage>, color: &Rgb<u8>) -> f32 {
-    let (sum, count) = img.pixels().map(|x| {
-        let x_color: &Rgb<u8> = &x.2;
-        let deltas = color.map2(x_color, |x1, x2| {
-            if x1 > x2 {
-                x1 - x2
-            } else {
-                x2 - x1
-            }
-        });
-        let delta: f32 = deltas.channels().iter().map(|x| *x as f32).sum();
-        delta
-    }).fold((0.0, 0), |(sum, count), new| (sum + new, count + 1));
+    let (sum, count) = img
+        .pixels()
+        .map(|x| {
+            let x_color: &Rgb<u8> = &x.2;
+            let deltas = color.map2(x_color, |x1, x2| if x1 > x2 { x1 - x2 } else { x2 - x1 });
+            let delta: f32 = deltas.channels().iter().map(|x| *x as f32).sum();
+            delta
+        })
+        .fold((0.0, 0), |(sum, count), new| (sum + new, count + 1));
     sum / (count as f32)
 }
 
@@ -71,7 +72,8 @@ fn get_game_type(game_type: SubImage<&RgbImage>) -> String {
             types
         };
     }
-    let mut colors: Vec<(f32, &Rgb<u8>)> = TYPES.keys()
+    let mut colors: Vec<(f32, &Rgb<u8>)> = TYPES
+        .keys()
         .map(|color| (mean_color_distance(&game_type, color), color))
         .collect();
     colors.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -102,9 +104,7 @@ fn get_replay(row: SubImage<&RgbImage>) -> Option<Replay> {
     if is_replay(&row) {
         let game_type = row.view(0, 0, 250, 40);
         let game_type = get_game_type(game_type);
-        Some(Replay {
-            game_type,
-        })
+        Some(Replay { game_type })
     } else {
         None
     }
@@ -115,16 +115,21 @@ impl Screenshot<ReplaysMenu> {
     pub fn get_replays(&self) -> Vec<Replay> {
         let data = &self.data;
         // This is wall-to-wall magic numbers, sorry about that.
-        (1..=11).filter_map(|index| {
-            let offset = (index - 1) * 40;
-            let row = data.view(70, 428 + offset, 1780, 40);
-            get_replay(row)
-        }).collect()
+        (1..=11)
+            .filter_map(|index| {
+                let offset = (index - 1) * 40;
+                let row = data.view(70, 428 + offset, 1780, 40);
+                get_replay(row)
+            })
+            .collect()
     }
 }
 
 fn warp_username_badge(badge: &RgbImage) -> GrayImage {
-    let transform = Projection::from_matrix([0.86979, 0.25266, -460.5, 0.07896, 1.00069, -885.0, 0.0, 0.0, 1.0]).unwrap();
+    let transform = Projection::from_matrix([
+        0.86979, 0.25266, -460.5, 0.07896, 1.00069, -885.0, 0.0, 0.0, 1.0,
+    ])
+    .unwrap();
     let badge = warp(&badge, &transform, Interpolation::Bicubic, Rgb([0, 0, 0]));
     let badge = badge.view(0, 0, 180, 40).to_image();
     let badge = sobel_gradients(&grayscale(&badge));
@@ -141,7 +146,11 @@ impl Screenshot<InReplay> {
         let actual_name_badge = warp_username_badge(data);
         let expected_name_badge = image::open("username_badge.png").unwrap();
         let expected_name_badge = warp_username_badge(&expected_name_badge.to_rgb());
-        let overlap = match_template(&actual_name_badge, &expected_name_badge, MatchTemplateMethod::CrossCorrelationNormalized);
+        let overlap = match_template(
+            &actual_name_badge,
+            &expected_name_badge,
+            MatchTemplateMethod::CrossCorrelationNormalized,
+        );
         let extremes = find_extremes(&overlap);
         extremes.max_value > 0.9
     }

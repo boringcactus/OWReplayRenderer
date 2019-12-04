@@ -1,4 +1,4 @@
-use crate::image::{Screenshot, OWContext};
+use crate::image::{OWContext, Screenshot};
 
 use serde_json::Value;
 use std::fs;
@@ -108,7 +108,9 @@ impl OBSClient {
             "width": 1920,
             "height": 1080,
         }));
-        let data = response["img"].as_str().expect("Screenshot data URI was not a string!");
+        let data = response["img"]
+            .as_str()
+            .expect("Screenshot data URI was not a string!");
         Screenshot::new(data)
     }
 }

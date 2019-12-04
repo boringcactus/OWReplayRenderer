@@ -1,7 +1,13 @@
 use winapi::shared::minwindef::{BOOL, FALSE, LPARAM, TRUE};
 use winapi::shared::ntdef::LPSTR;
 use winapi::shared::windef::HWND;
-use winapi::um::winuser::{EnumWindows, GetForegroundWindow, GetWindowTextA, GetWindowTextLengthA, SendInput, INPUT, INPUT_KEYBOARD, INPUT_MOUSE, KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, VK_DOWN, VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_LCONTROL, VK_LEFT, VK_SPACE, VK_TAB, VK_UP, VK_RIGHT};
+use winapi::um::winuser::{
+    EnumWindows, GetForegroundWindow, GetWindowTextA, GetWindowTextLengthA, SendInput, INPUT,
+    INPUT_KEYBOARD, INPUT_MOUSE, KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
+    MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, VK_DOWN, VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2,
+    VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_LCONTROL, VK_LEFT, VK_RIGHT, VK_SPACE,
+    VK_TAB, VK_UP,
+};
 
 #[derive(Debug, Copy, Clone)]
 enum Target {

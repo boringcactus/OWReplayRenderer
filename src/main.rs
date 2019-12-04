@@ -7,24 +7,22 @@ mod image;
 mod obs;
 mod window;
 
+use crate::image::{InReplay, Screenshot};
 use obs::*;
-use std::env::{set_current_dir, current_exe};
+use std::env::{current_exe, set_current_dir};
 use std::ffi::OsString;
 use std::fs::read_dir;
 use std::io::{stdin, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 use window::*;
-use crate::image::{InReplay, Screenshot};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 lazy_static! {
-    static ref RUNNING: Arc<AtomicBool> = {
-        Arc::new(AtomicBool::new(true))
-    };
+    static ref RUNNING: Arc<AtomicBool> = { Arc::new(AtomicBool::new(true)) };
 }
 
 fn main() {
@@ -80,7 +78,8 @@ Alt-tab back into Overwatch and then come back in a long time."
 
         ctrlc::set_handler(move || {
             r.store(false, Ordering::SeqCst);
-        }).expect("Error setting Ctrl-C handler");
+        })
+        .expect("Error setting Ctrl-C handler");
     }
 
     let replay_count = replays.len();
@@ -115,8 +114,10 @@ fn read_replay_range() -> Vec<u8> {
         let range: Vec<&str> = piece.splitn(2, "-").collect();
         let bounds = match range.as_slice() {
             [n] => n.parse::<u8>().map(|x| (x, x)),
-            [a, b] => a.parse::<u8>().and_then(|a| b.parse::<u8>().map(|b| (a, b))),
-            _ => unreachable!()
+            [a, b] => a
+                .parse::<u8>()
+                .and_then(|a| b.parse::<u8>().map(|b| (a, b))),
+            _ => unreachable!(),
         };
         let (lo, hi) = match bounds {
             Ok((lo, hi)) => {
@@ -133,7 +134,7 @@ fn read_replay_range() -> Vec<u8> {
                     return read_replay_range();
                 }
                 (lo, hi)
-            },
+            }
             Err(e) => {
                 println!("Bad range: {}", e);
                 return read_replay_range();
