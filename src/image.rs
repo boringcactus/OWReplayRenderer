@@ -2,8 +2,6 @@ use image::imageops::grayscale;
 use image::Pixel;
 use image::{GenericImageView, GrayImage, ImageFormat, Rgb, RgbImage, SubImage};
 use imageproc::geometric_transformations::{warp, Interpolation, Projection};
-use imageproc::gradients::sobel_gradients;
-use imageproc::map::map_subpixels;
 use imageproc::stats::histogram;
 use imageproc::template_matching::{find_extremes, match_template, MatchTemplateMethod};
 use std::marker::PhantomData;
@@ -127,13 +125,12 @@ impl Screenshot<ReplaysMenu> {
 
 fn warp_username_badge(badge: &RgbImage) -> GrayImage {
     let transform = Projection::from_matrix([
-        0.86979, 0.25266, -460.5, 0.07896, 1.00069, -885.0, 0.0, 0.0, 1.0,
+        0.86979, 0.25266, -465.5, 0.07896, 1.00069, -885.0, 0.0, 0.0, 1.0,
     ])
     .unwrap();
     let badge = warp(&badge, &transform, Interpolation::Bicubic, Rgb([0, 0, 0]));
     let badge = badge.view(0, 0, 180, 40).to_image();
-    let badge = sobel_gradients(&grayscale(&badge));
-    map_subpixels(&badge, |x| (x / 255) as u8)
+    grayscale(&badge)
 }
 
 impl Screenshot<InReplay> {
