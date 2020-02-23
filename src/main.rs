@@ -87,7 +87,7 @@ Alt-tab back into Overwatch and then come back in a long time."
         let mut obs = OBSClient::new();
         let record_dir = obs.use_subdir();
 
-        record(&mut obs, index);
+        record(&mut obs, index, &record_dir);
         if !RUNNING.load(Ordering::SeqCst) {
             return;
         }
@@ -184,7 +184,7 @@ fn guess_side(obs: &mut OBSClient, overwatch: &Window) -> Side {
     Side::Red
 }
 
-fn record(obs: &mut OBSClient, index: u8) {
+fn record(obs: &mut OBSClient, index: u8, record_dir: &PathBuf) {
     let overwatch = Window::overwatch();
 
     overwatch.await_focus();
@@ -230,7 +230,7 @@ fn record(obs: &mut OBSClient, index: u8) {
     }
 
     for player in side {
-        record_once(player, obs, &overwatch);
+        record_once(player, obs, &overwatch, record_dir);
         if !RUNNING.load(Ordering::SeqCst) {
             return;
         }
@@ -255,7 +255,7 @@ fn read_line() -> String {
     result.trim().to_string()
 }
 
-fn record_once(player: Key, obs: &mut OBSClient, overwatch: &Window) {
+fn record_once(player: Key, obs: &mut OBSClient, overwatch: &Window, record_dir: &PathBuf) {
     // make sure we don't start while overwatch is not focused
     overwatch.await_focus();
     // tell overwatch to watch the designated player
@@ -311,6 +311,7 @@ fn record_once(player: Key, obs: &mut OBSClient, overwatch: &Window) {
     big_sleep();
     // re-pause since reaching end doesn't actually pause
     overwatch.send(&ctrl(P));
+    rename(record_dir);
     print!("{:?} done. ", player);
     std::io::stdout().flush().unwrap();
 }
@@ -389,7 +390,7 @@ fn mux(record_dir: PathBuf) {
         src.push("mosaic.mkv");
         let mut dest = PathBuf::from(record_dir.parent().expect("No path parent").clone());
         dest.push(format!(
-            "mosaic_{}.mkv",
+            "done_mosaic_{}.mkv",
             record_dir
                 .file_name()
                 .and_then(|x| x.to_str())
@@ -450,6 +451,17 @@ fn has_ffmpeg() -> bool {
         .status()
         .unwrap();
     result.success()
+}
+
+pub fn rename(record_dir: &PathBuf) {
+    let not_done = read_dir(record_dir)
+        .unwrap()
+        .filter_map(|x| x.ok())
+        .filter_map(|x| x.file_name().into_string().ok())
+        .filter(|x| !x.starts_with("done_"));
+    for file in not_done {
+        ::std::fs::rename(&file, format!("done_{}", &file)).unwrap();
+    }
 }
 
 pub fn timestamp() -> String {
