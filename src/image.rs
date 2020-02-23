@@ -138,7 +138,7 @@ impl Screenshot<InReplay> {
         std::fs::metadata("username_badge.png").is_ok()
     }
 
-    pub fn is_me(&self) -> bool {
+    pub fn is_me_score(&self) -> f32 {
         let data = &self.data;
         let actual_name_badge = warp_username_badge(data);
         let expected_name_badge = image::open("username_badge.png").unwrap();
@@ -149,7 +149,7 @@ impl Screenshot<InReplay> {
             MatchTemplateMethod::CrossCorrelationNormalized,
         );
         let extremes = find_extremes(&overlap);
-        extremes.max_value > 0.9
+        extremes.max_value
     }
 
     pub fn is_gameover(&self) -> bool {

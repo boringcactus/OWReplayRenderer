@@ -171,17 +171,16 @@ fn guess_side(obs: &mut OBSClient, overwatch: &Window) -> Side {
     overwatch.send(&ctrl(Right));
     big_sleep();
 
-    // see if we can find the player on the blue side
-    let blue_keys: Vec<Key> = Side::Blue.into();
-    for key in blue_keys {
-        overwatch.send(&key);
-        big_sleep();
-        if obs.get_screenshot::<InReplay>().is_me() {
-            // we're on the blue side!
-            return Side::Blue;
-        }
-    }
-    Side::Red
+    // see if we can find the player
+    let best = [Side::Blue, Side::Red].iter().max_by_key(|side| {
+        let keys: Vec<Key> = side.into();
+        keys.iter().map(|key| {
+            overwatch.send(key);
+            big_sleep();
+            obs.get_screenshot::<InReplay>().is_me_score()
+        }).max()
+    });
+    best.unwrap().clone()
 }
 
 fn record(obs: &mut OBSClient, index: u8, record_dir: &PathBuf) {
