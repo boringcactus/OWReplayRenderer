@@ -172,15 +172,16 @@ fn guess_side(obs: &mut OBSClient, overwatch: &Window) -> Side {
     big_sleep();
 
     // see if we can find the player
-    let best = [Side::Blue, Side::Red].iter().max_by_key(|side| {
+    let best = [Side::Blue, Side::Red].iter().map(|&side| {
         let keys: Vec<Key> = side.into();
-        keys.iter().map(|key| {
+        let max = keys.iter().map(|key| {
             overwatch.send(key);
             big_sleep();
             obs.get_screenshot::<InReplay>().is_me_score()
-        }).max()
-    });
-    best.unwrap().clone()
+        }).max_by(|n1, n2| n1.partial_cmp(n2).expect("Couldn't compare floats")).expect("Couldn't compare floats");
+        (side, max)
+    }).max_by(|(_, n1), (_, n2)| n1.partial_cmp(n2).expect("Couldn't compare floats"));
+    best.expect("Couldn't compare floats").0
 }
 
 fn record(obs: &mut OBSClient, index: u8, record_dir: &PathBuf) {
@@ -250,7 +251,7 @@ fn record(obs: &mut OBSClient, index: u8, record_dir: &PathBuf) {
 fn read_line() -> String {
     let stdin = stdin();
     let mut result = String::new();
-    stdin.read_line(&mut result).unwrap();
+    stdin.read_line(&mut result).expect("Couldn't read from stdin");
     result.trim().to_string()
 }
 
@@ -312,7 +313,7 @@ fn record_once(player: Key, obs: &mut OBSClient, overwatch: &Window, record_dir:
     overwatch.send(&ctrl(P));
     rename(record_dir);
     print!("{:?} done. ", player);
-    std::io::stdout().flush().unwrap();
+    std::io::stdout().flush().expect("Couldn't flush stdout");
 }
 
 pub fn small_sleep() {
@@ -336,7 +337,7 @@ fn mux(record_dir: PathBuf) {
         return;
     }
     let cameras = read_dir(&record_dir)
-        .unwrap()
+        .expect("Couldn't read record dir for muxing")
         .filter_map(|x| x.ok())
         .map(|x| x.file_name())
         .filter(|x| x != "final.mkv" && x != "mosaic.mkv")
@@ -373,7 +374,7 @@ fn mux(record_dir: PathBuf) {
         .arg("mosaic.mkv")
         .current_dir(&record_dir)
         .status()
-        .unwrap();
+        .expect("Couldn't build mosaic");
     if !result.success() {
         panic!(
             "ffmpeg failed with code {}",
@@ -429,7 +430,7 @@ fn mux(record_dir: PathBuf) {
         .arg(&out_name)
         .current_dir(&record_dir)
         .status()
-        .unwrap();
+        .expect("Couldn't mux");
     if !result.success() {
         panic!(
             "ffmpeg failed with code {}",
@@ -448,18 +449,20 @@ fn has_ffmpeg() -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .unwrap();
+        .expect("Couldn't try to detect ffmpeg");
     result.success()
 }
 
 pub fn rename(record_dir: &PathBuf) {
     let not_done = read_dir(record_dir)
-        .unwrap()
+        .expect("Couldn't read record dir for renaming")
         .filter_map(|x| x.ok())
         .filter_map(|x| x.file_name().into_string().ok())
         .filter(|x| !x.starts_with("done_"));
     for file in not_done {
-        ::std::fs::rename(&file, format!("done_{}", &file)).unwrap();
+        let src = record_dir.join(&file);
+        let dest = record_dir.join(format!("done_{}", &file));
+        ::std::fs::rename(src, dest).expect("Couldn't rename");
     }
 }
 
